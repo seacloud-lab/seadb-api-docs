@@ -1,0 +1,23 @@
+# Sync the SeaDB OpenAPI definition to ReadMe.
+name: ReadMe GitHub Action
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - api/seadb.yaml
+      - .github/workflows/rdme.yml
+  workflow_dispatch:
+
+jobs:
+  rdme-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Upload SeaDB OpenAPI document
+        uses: readmeio/rdme@v10
+        with:
+          rdme: openapi upload ./api/seadb.yaml --key=${{ secrets.README_API_KEY }}
