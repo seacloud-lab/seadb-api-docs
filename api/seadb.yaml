@@ -1,0 +1,955 @@
+openapi: 3.0.3
+info:
+  title: SeaDB API
+  description: |-
+    SeaDB (ScaleDB) API reference for querying and managing data in a single base.
+    The target base is specified by the `base_id` path parameter.
+  version: '1.0'
+
+servers:
+  - url: https://{server}
+    variables:
+      server:
+        default: seadb.example.com
+        description: SeaDB server hostname.
+
+x-readme:
+  explorer-enabled: true
+  metrics-enabled: false
+  proxy-enabled: false
+
+security:
+  - JWTAuth: []
+
+tags:
+  - name: Data
+    description: SQL queries and row operations.
+  - name: Tables
+    description: Table management operations.
+  - name: Columns
+    description: Column management operations.
+  - name: Single-select options
+    description: Single-select and multiple-select option management operations.
+  - name: Indexes
+    description: Index management operations.
+
+components:
+  securitySchemes:
+    JWTAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        JWT for the base being accessed. Send it in the Authorization header as
+        `Authorization: Bearer <JWT>`.
+
+  parameters:
+    base_id:
+      name: base_id
+      in: path
+      required: true
+      description: UUID of the base being accessed.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error_message
+      properties:
+        error_message:
+          type: string
+          description: Error message returned by SeaDB.
+      additionalProperties: true
+
+    Success:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+
+    QueryRequest:
+      type: object
+      required:
+        - sql
+      properties:
+        sql:
+          type: string
+          description: SQL statement to execute.
+          example: SELECT * FROM `Table1` LIMIT 10
+        parameters:
+          type: array
+          description: Values for positional `?` parameters in the SQL statement.
+          items: {}
+        convert_keys:
+          type: boolean
+          default: false
+          description: >-
+            When true, use column names as keys in rows and metadata and convert
+            select-option keys to option names.
+
+    QueryMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Query-generated identifier used to access a cell in a result row.
+        key:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        table_id:
+          type: string
+        table_name:
+          type: string
+      additionalProperties: true
+
+    QueryResponse:
+      type: object
+      required:
+        - success
+        - results
+        - metadata
+        - is_join_stmt
+      properties:
+        success:
+          type: boolean
+        error_message:
+          type: string
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        metadata:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryMetadata'
+        is_join_stmt:
+          type: boolean
+
+    InsertRowsRequest:
+      type: object
+      required:
+        - table_name
+        - rows
+      properties:
+        table_name:
+          type: string
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/Row'
+        replace:
+          type: boolean
+          default: false
+          description: Replace a row matched by a unique index instead of inserting a new row.
+
+    InsertRowsResponse:
+      type: object
+      properties:
+        inserted_row_count:
+          type: integer
+        pks:
+          type: array
+          items:
+            type: integer
+        error_message:
+          type: string
+
+    Row:
+      type: object
+      description: A row whose keys are column names.
+      additionalProperties: true
+
+    UpdateRowsRequest:
+      type: object
+      required:
+        - table_name
+        - updates
+      properties:
+        table_name:
+          type: string
+        updates:
+          type: array
+          items:
+            type: object
+            required:
+              - pk
+              - row
+            properties:
+              pk:
+                type: integer
+              row:
+                $ref: '#/components/schemas/Row'
+
+    DeleteRowsRequest:
+      type: object
+      required:
+        - table_name
+        - pks
+      properties:
+        table_name:
+          type: string
+        pks:
+          type: array
+          items:
+            type: integer
+
+    DeleteRowsResponse:
+      type: object
+      required:
+        - deleted_rows
+      properties:
+        deleted_rows:
+          type: integer
+
+    TableIdentifier:
+      type: object
+      description: Identify a table by ID, name, or both.
+      properties:
+        table_id:
+          type: string
+        table_name:
+          type: string
+
+    CreateTableRequest:
+      type: object
+      required:
+        - table_name
+      properties:
+        table_name:
+          type: string
+
+    CreateTableResponse:
+      type: object
+      required:
+        - table_id
+      properties:
+        table_id:
+          type: string
+
+    RenameTableRequest:
+      allOf:
+        - $ref: '#/components/schemas/TableIdentifier'
+        - type: object
+          required:
+            - new_table_name
+          properties:
+            new_table_name:
+              type: string
+
+    CreateColumnRequest:
+      allOf:
+        - $ref: '#/components/schemas/TableIdentifier'
+        - type: object
+          required:
+            - column_name
+            - column_type
+          properties:
+            column_name:
+              type: string
+            column_type:
+              type: string
+              enum:
+                - text
+                - int64
+                - float64
+                - float32
+                - bool
+                - datetime
+                - single-select
+                - multiple-select
+                - list
+            column_data:
+              type: object
+              additionalProperties: true
+
+    CreateColumnResponse:
+      type: object
+      required:
+        - column_key
+      properties:
+        column_key:
+          type: string
+
+    ColumnIdentifier:
+      allOf:
+        - $ref: '#/components/schemas/TableIdentifier'
+        - type: object
+          properties:
+            column_key:
+              type: string
+            column_name:
+              type: string
+
+    UpdateColumnRequest:
+      allOf:
+        - $ref: '#/components/schemas/ColumnIdentifier'
+        - type: object
+          properties:
+            new_column_name:
+              type: string
+            update_column_data:
+              type: object
+              description: Only the supplied keys are updated.
+              additionalProperties: true
+
+    CopyColumnRequest:
+      allOf:
+        - $ref: '#/components/schemas/TableIdentifier'
+        - type: object
+          required:
+            - src_column_name
+            - dst_column_name
+          properties:
+            src_column_name:
+              type: string
+            dst_column_name:
+              type: string
+
+    CopyColumnResponse:
+      type: object
+      required:
+        - column_key
+      properties:
+        column_key:
+          type: string
+
+    OptionIdentifier:
+      allOf:
+        - $ref: '#/components/schemas/ColumnIdentifier'
+        - type: object
+          properties:
+            option_id:
+              type: string
+            option_name:
+              type: string
+
+    CreateOptionRequest:
+      allOf:
+        - $ref: '#/components/schemas/ColumnIdentifier'
+        - type: object
+          required:
+            - option_name
+          properties:
+            option_name:
+              type: string
+            option_data:
+              type: object
+              description: Additional option properties. Keys named id or name are ignored.
+              additionalProperties: true
+
+    CreateOptionResponse:
+      type: object
+      required:
+        - option_id
+      properties:
+        option_id:
+          type: string
+
+    DeleteOptionsRequest:
+      allOf:
+        - $ref: '#/components/schemas/ColumnIdentifier'
+        - type: object
+          properties:
+            option_id:
+              type: string
+            option_name:
+              type: string
+            option_ids:
+              type: array
+              items:
+                type: string
+            option_names:
+              type: array
+              items:
+                type: string
+
+    UpdateOptionRequest:
+      allOf:
+        - $ref: '#/components/schemas/OptionIdentifier'
+        - type: object
+          properties:
+            new_option_name:
+              type: string
+            update_option_data:
+              type: object
+              description: Only the supplied keys are updated.
+              additionalProperties: true
+
+    CreateIndexRequest:
+      type: object
+      required:
+        - table_id
+        - columns
+      properties:
+        table_id:
+          type: string
+        columns:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        sync:
+          type: boolean
+          default: false
+          description: Create the index synchronously when true.
+        unique:
+          type: boolean
+          default: false
+          description: Create a unique index when true.
+
+    CreateIndexResponse:
+      type: object
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: Task ID for asynchronous creation; empty for synchronous creation.
+
+    DeleteIndexRequest:
+      type: object
+      required:
+        - table_id
+        - index_id
+      properties:
+        table_id:
+          type: string
+        index_id:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+paths:
+  /api/v1/{base_id}/query:
+    post:
+      tags:
+        - Data
+      operationId: executeSqlQuery
+      summary: Execute SQL Query
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: >-
+        Execute a SELECT, INSERT, UPDATE, or DELETE statement. Parameterized
+        values use `?` placeholders and cannot replace identifiers such as table
+        names, column names, or function names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Query result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/rows:
+    post:
+      tags:
+        - Data
+      operationId: insertRows
+      summary: Insert rows
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Insert multiple rows. Row object keys are column names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InsertRowsRequest'
+      responses:
+        '200':
+          description: Insert result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertRowsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+        - Data
+      operationId: updateRows
+      summary: Batch update rows
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Update multiple rows by primary key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRowsRequest'
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags:
+        - Data
+      operationId: deleteRows
+      summary: Batch delete rows
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Delete rows by primary key. Missing primary keys are ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRowsRequest'
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteRowsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/tables:
+    post:
+      tags:
+        - Tables
+      operationId: createTable
+      summary: Create a table
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTableRequest'
+      responses:
+        '200':
+          description: Created table
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTableResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags:
+        - Tables
+      operationId: deleteTable
+      summary: Delete a table
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Identify the table with table_id, table_name, or both.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableIdentifier'
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+        - Tables
+      operationId: updateTable
+      summary: Update a table
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Update the name of an existing table.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameTableRequest'
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/tables/update-row-count:
+    post:
+      tags:
+        - Tables
+      operationId: updateTableRowCount
+      summary: Update a table's row count
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableIdentifier'
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/columns:
+    post:
+      tags:
+        - Columns
+      operationId: createColumn
+      summary: Create a column
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: >-
+        Create a column. Supported types are text, int64, float64, float32,
+        bool, datetime, single-select, multiple-select, and list. Each table
+        also has a built-in auto-increment `_pk` column.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateColumnRequest'
+      responses:
+        '200':
+          description: Created column
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateColumnResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags:
+        - Columns
+      operationId: deleteColumn
+      summary: Delete a column
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ColumnIdentifier'
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+        - Columns
+      operationId: updateColumn
+      summary: Update a column
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Update a column name and/or selected keys in column_data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateColumnRequest'
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/columns/copy:
+    post:
+      tags:
+        - Columns
+      operationId: copyColumn
+      summary: Copy a column
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Copy a column's metadata and values into a new column.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CopyColumnRequest'
+      responses:
+        '200':
+          description: Created column
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopyColumnResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/column-options:
+    post:
+      tags:
+        - Single-select options
+      operationId: createColumnOption
+      summary: Create a single-select option
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Create an option for a single-select or multiple-select column.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOptionRequest'
+      responses:
+        '200':
+          description: Created option
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateOptionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags:
+        - Single-select options
+      operationId: deleteColumnOption
+      summary: Delete a single-select option
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Delete one or more options by ID and/or name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteOptionsRequest'
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+        - Single-select options
+      operationId: updateColumnOption
+      summary: Update a single-select option
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: Update an option name and/or selected keys in option_data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOptionRequest'
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/{base_id}/index:
+    post:
+      tags:
+        - Indexes
+      operationId: createIndex
+      summary: Create an index
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      description: >-
+        Create an index for one or more columns. For asynchronous creation,
+        the response contains a task_id. For synchronous creation, task_id is
+        empty after the index is complete. Columns cannot be repeated in a
+        compound index.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIndexRequest'
+      responses:
+        '200':
+          description: Index creation task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateIndexResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags:
+        - Indexes
+      operationId: deleteIndex
+      summary: Delete a column index
+      parameters:
+        - $ref: '#/components/parameters/base_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteIndexRequest'
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
