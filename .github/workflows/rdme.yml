@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - api/seadb.yaml
+      - reference/introduction.md
       - .github/workflows/rdme.yml
   workflow_dispatch:
 
@@ -21,3 +22,8 @@ jobs:
         uses: readmeio/rdme@v10
         with:
           rdme: openapi upload ./api/seadb.yaml --key=${{ secrets.README_API_KEY }}
+
+      - name: Upload SeaDB introduction page
+        uses: readmeio/rdme@v10
+        with:
+          rdme: reference upload ./reference/introduction.md --key=${{ secrets.README_API_KEY }}
