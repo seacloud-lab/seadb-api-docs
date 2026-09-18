@@ -32,6 +32,8 @@ tags:
     description: Single-select and multiple-select option management operations.
   - name: Indexes
     description: Index management operations.
+  - name: Templates
+    description: Template management operations.
 
 components:
   securitySchemes:
@@ -42,6 +44,19 @@ components:
       description: >-
         JWT for the base being accessed. Send it in the Authorization header as
         `Authorization: Bearer <JWT>`.
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: >-
+        HTTP basic authentication using a SeaDB username and password.
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ApiKey
+      description: >-
+        SeaDB API key sent in the Authorization header as
+        `Authorization: ApiKey <encoded>`, where `<encoded>` is the URL-safe
+        Base64 encoding of `key_id:key`.
 
   parameters:
     base_id:
@@ -230,6 +245,17 @@ components:
       properties:
         table_name:
           type: string
+        template_base_name:
+          type: string
+          description: >-
+            Name of the template to bind the table to. When omitted but
+            `template_table_name` is set, the current user's default template is
+            used.
+        template_table_name:
+          type: string
+          description: >-
+            Name of the template table whose schema the new table uses. Must be
+            set together with `template_base_name`.
 
     CreateTableResponse:
       type: object
@@ -430,6 +456,161 @@ components:
         index_id:
           type: string
 
+    TemplateColumn:
+      type: object
+      description: A column definition in a template table.
+      required:
+        - name
+        - type
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum:
+            - text
+            - int64
+            - float64
+            - float32
+            - bool
+            - datetime
+            - single-select
+            - multiple-select
+            - list
+        data:
+          type: object
+          additionalProperties: true
+
+    TemplateTableIndexSpec:
+      type: object
+      properties:
+        columns:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        unique:
+          type: boolean
+          default: false
+
+    TemplateTableSpec:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateColumn'
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateTableIndexSpec'
+
+    TemplateIndexSpec:
+      type: object
+      required:
+        - table_name
+        - columns
+      properties:
+        table_name:
+          type: string
+        columns:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        unique:
+          type: boolean
+          default: false
+
+    CreateTemplateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateTableSpec'
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateIndexSpec'
+
+    CreateTemplateResponse:
+      type: object
+      required:
+        - name
+        - id
+      properties:
+        name:
+          type: string
+        id:
+          type: string
+          description: UUID of the template base.
+
+    TemplateInfo:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: UUID of the template base.
+        name:
+          type: string
+
+    TemplateTable:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        template_base_id:
+          type: string
+        template_table_id:
+          type: string
+        template_version:
+          type: integer
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateColumn'
+        custom_columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateColumn'
+        indexes:
+          type: object
+          additionalProperties: true
+
+    GetTemplateResponse:
+      type: object
+      required:
+        - id
+        - name
+        - tables
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateTable'
+
   responses:
     BadRequest:
       description: Bad Request
@@ -439,6 +620,12 @@ components:
             $ref: '#/components/schemas/Error'
     Unauthorized:
       description: Unauthorized or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Permission denied
       content:
         application/json:
           schema:
@@ -949,6 +1136,115 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/templates:
+    post:
+      tags:
+        - Templates
+      operationId: createTemplate
+      summary: Create a template
+      description: >-
+        Create a template with its tables, columns, and indexes. This operation
+        is restricted to administrators.
+      security:
+        - BasicAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '200':
+          description: Created template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags:
+        - Templates
+      operationId: listTemplates
+      summary: List templates
+      description: >-
+        List all templates. This operation is restricted to administrators.
+      security:
+        - BasicAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: offset
+          in: query
+          description: Number of templates to skip.
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          description: Maximum number of templates to return.
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TemplateInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/templates/info:
+    get:
+      tags:
+        - Templates
+      operationId: getTemplateInfo
+      summary: Get template info
+      description: >-
+        Get the definition of a template. This operation is restricted to
+        administrators.
+      security:
+        - BasicAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: Template name.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Template info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetTemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
