@@ -233,6 +233,12 @@ components:
       properties:
         table_name:
           type: string
+        template_table_name:
+          type: string
+          description: >-
+            Name of the template table whose schema the new table uses. When
+            set, the new table is bound to that table in the current user's
+            default template.
 
     CreateTableResponse:
       type: object
@@ -581,6 +587,10 @@ paths:
         - Tables
       operationId: createTable
       summary: Create a table
+      description: >-
+        Create a table. To bind the table to a template, set
+        `template_table_name`; the table's columns and indexes are then taken
+        from that template table in the current user's default template.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
