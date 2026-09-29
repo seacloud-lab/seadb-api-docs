@@ -48,10 +48,12 @@ components:
       name: base_id
       in: path
       required: true
-      description: UUID of the base being accessed.
+      description: >-
+        UUID or name of the base being accessed. Use the reserved keyword `template` to
+        work with the current user's template tables. For example, create
+        a template table with `POST /api/v1/template/tables`.
       schema:
         type: string
-        format: uuid
 
   schemas:
     Error:
@@ -230,6 +232,11 @@ components:
       properties:
         table_name:
           type: string
+        template_table_name:
+          type: string
+          description: >-
+            Name of the template table whose schema the new table uses. When
+            set, the new table is bound to the specific template table.
 
     CreateTableResponse:
       type: object
@@ -578,6 +585,10 @@ paths:
         - Tables
       operationId: createTable
       summary: Create a table
+      description: >-
+        Create a table. To bind the table to a template, set
+        `template_table_name`; the table's columns and indexes are then taken
+        from that template table.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
@@ -953,3 +964,4 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+
