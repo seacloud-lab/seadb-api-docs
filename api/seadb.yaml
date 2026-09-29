@@ -49,10 +49,9 @@ components:
       in: path
       required: true
       description: >-
-        UUID or name of the base being accessed. The reserved value `template`
-        refers to the current user's default template base, so any base-scoped
-        request can use `template` in place of the base_id. For example, create
-        a table in the default template base with `POST /api/v1/template/tables`.
+        UUID or name of the base being accessed. Use the reserved keyword `template` to
+        work with the current user's template tables. For example, create
+        a template table with `POST /api/v1/template/tables`.
       schema:
         type: string
 
@@ -237,8 +236,7 @@ components:
           type: string
           description: >-
             Name of the template table whose schema the new table uses. When
-            set, the new table is bound to that table in the current user's
-            default template.
+            set, the new table is bound to the specific template table.
 
     CreateTableResponse:
       type: object
@@ -590,7 +588,7 @@ paths:
       description: >-
         Create a table. To bind the table to a template, set
         `template_table_name`; the table's columns and indexes are then taken
-        from that template table in the current user's default template.
+        from that template table.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
