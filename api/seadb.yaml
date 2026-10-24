@@ -2,8 +2,8 @@ openapi: 3.0.3
 info:
   title: SeaDB API
   description: |-
-    SeaDB (ScaleDB) API reference for querying and managing data in a single base.
-    The target base is specified by the `base_id` path parameter.
+    SeaDB (ScaleDB) API reference for querying data and managing bases, schemas and users.
+    See the Authentication reference page for Basic, ApiKey and JWT authentication.
   version: '1.0'
 
 servers:
@@ -19,22 +19,41 @@ x-readme:
   proxy-enabled: false
 
 security:
+  - BasicAuth: []
+  - APIKeyAuth: []
   - JWTAuth: []
 
 tags:
+  - name: Authentication
+    description: Manage API keys and obtain base JWTs using Basic or ApiKey authentication.
+  - name: Bases
+    description: Base management, metadata and statistics.
+  - name: Users
+    description: User administration and base associations.
   - name: Data
     description: SQL queries and row operations.
   - name: Tables
     description: Table management operations.
   - name: Columns
     description: Column management operations.
-  - name: Single-select options
+  - name: Single/Multiple Select Options
     description: Single-select and multiple-select option management operations.
   - name: Indexes
     description: Index management operations.
+  - name: System
+    description: Health checks and administrative monitoring.
 
 components:
   securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: Standard Base64 encoding of username:password. With curl, use --user "$SEADB_USERNAME:$SEADB_PASSWORD".
+    APIKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'Enter the complete header value: ApiKey <encoded>. encoded is unpadded URL-safe Base64 of key_id:key, returned when creating the key.'
     JWTAuth:
       type: http
       scheme: bearer
@@ -49,9 +68,8 @@ components:
       in: path
       required: true
       description: >-
-        UUID or name of the base being accessed. Use the reserved keyword `template` to
-        work with the current user's template tables. For example, create
-        a template table with `POST /api/v1/template/tables`.
+        Base UUID or assigned name. Use `template` to manage the current user's
+        template tables; this alias requires Basic or ApiKey authentication.
       schema:
         type: string
 
@@ -82,38 +100,52 @@ components:
       properties:
         sql:
           type: string
-          description: SQL statement to execute.
+          description: SQL statement; maximum 1 MiB of UTF-8 bytes.
           example: SELECT * FROM `Table1` LIMIT 10
         parameters:
           type: array
-          description: Values for positional `?` parameters in the SQL statement.
+          description: Values for positional `?` parameters; placeholders substitute values, not identifiers. Supported values include null, booleans, numbers, strings and string arrays.
           items: {}
         convert_keys:
           type: boolean
           default: false
           description: >-
-            When true, use column names as keys in rows and metadata and convert
-            select-option keys to option names.
+            Use column names as result keys and convert select-option IDs to names.
+            By default column keys are used for result keys and select columns return option IDs.
 
     QueryMetadata:
       type: object
       properties:
         id:
           type: string
-          description: Query-generated identifier used to access a cell in a result row.
+          description: >-
+            Key used to access this column's cell in a result row object.
+            Its format depends on query type and `convert_keys`:
+            - Standard SELECT: column key by default (`convert_keys: false`); column name when `convert_keys: true`.
+            - JOIN query: 4-digit index (`0000`, `0001`, ...) by default (`convert_keys: false`); `table_name.column_name` when `convert_keys: true`.
         key:
           type: string
+          description: Internal column key (or expression text/alias).
         name:
           type: string
+          description: Column name (or alias).
         type:
           type: string
+          description: Column type.
         data:
           type: object
+          nullable: true
           additionalProperties: true
+          description: Column-specific metadata; may be null.
         table_id:
           type: string
+          description: Internal table identifier.
         table_name:
           type: string
+          description: Table name.
+        base_id:
+          type: string
+          description: Base UUID.
       additionalProperties: true
 
     QueryResponse:
@@ -129,12 +161,17 @@ components:
         error_message:
           type: string
         results:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
+          description: SELECT returns an array of rows; DML and most DDL return null. SQL CREATE INDEX returns an object containing task_id.
+          oneOf:
+            - type: array
+              nullable: true
+              items: {type: object, additionalProperties: true}
+            - type: object
+              properties:
+                task_id: {type: string}
         metadata:
           type: array
+          nullable: true
           items:
             $ref: '#/components/schemas/QueryMetadata'
         is_join_stmt:
@@ -143,9 +180,14 @@ components:
     InsertRowsRequest:
       type: object
       required:
-        - table_name
         - rows
+      anyOf:
+        - required: [table_id]
+        - required: [table_name]
       properties:
+        table_id:
+          type: string
+          description: Table ID; takes precedence over table_name.
         table_name:
           type: string
         rows:
@@ -164,6 +206,7 @@ components:
           type: integer
         pks:
           type: array
+          nullable: true
           items:
             type: integer
         error_message:
@@ -177,13 +220,20 @@ components:
     UpdateRowsRequest:
       type: object
       required:
-        - table_name
         - updates
+      anyOf:
+        - required: [table_id]
+        - required: [table_name]
       properties:
+        table_id: {type: string}
         table_name:
           type: string
         updates:
           type: array
+          maxItems: 1000
+          description: >-
+            Array of row updates. In each object, `pk` is the row's `_pk` field,
+            and `row` contains the column names and values to update.
           items:
             type: object
             required:
@@ -192,21 +242,28 @@ components:
             properties:
               pk:
                 type: integer
+                minimum: 0
+                description: Built-in primary key (`_pk`) of the row to update.
               row:
                 $ref: '#/components/schemas/Row'
 
     DeleteRowsRequest:
       type: object
       required:
-        - table_name
         - pks
+      anyOf:
+        - required: [table_id]
+        - required: [table_name]
       properties:
+        table_id: {type: string}
         table_name:
           type: string
         pks:
           type: array
+          maxItems: 10000
           items:
             type: integer
+            minimum: 0
 
     DeleteRowsResponse:
       type: object
@@ -215,10 +272,14 @@ components:
       properties:
         deleted_rows:
           type: integer
+          description: Number of deleted rows.
 
     TableIdentifier:
       type: object
-      description: Identify a table by ID, name, or both.
+      description: Identify a table by ID or name. ID is tried first; name is a fallback if the ID does not resolve.
+      anyOf:
+        - required: [table_id]
+        - required: [table_name]
       properties:
         table_id:
           type: string
@@ -280,6 +341,10 @@ components:
                 - list
             column_data:
               type: object
+              description: >-
+                Configuration object for column types that support options or settings:
+                - `single-select`, `multiple-select`: `options` (array of objects), where each object defines an option with `id` (unique string), `name` (string), and optional attributes (`color`, `text_color`).
+                - `text`: `compressed` (boolean, optional), set `true` to enable text compression.
               additionalProperties: true
 
     CreateColumnResponse:
@@ -294,9 +359,13 @@ components:
       allOf:
         - $ref: '#/components/schemas/TableIdentifier'
         - type: object
+          anyOf:
+            - required: [column_key]
+            - required: [column_name]
           properties:
             column_key:
               type: string
+              description: Column key; takes precedence over column_name.
             column_name:
               type: string
 
@@ -309,7 +378,9 @@ components:
               type: string
             update_column_data:
               type: object
-              description: Only the supplied keys are updated.
+              description: >-
+                Configuration object containing fields to update for the column. Only supplied fields are updated.
+                Supported fields depend on column type; see `column_data` in create column for details.
               additionalProperties: true
 
     CopyColumnRequest:
@@ -337,11 +408,33 @@ components:
       allOf:
         - $ref: '#/components/schemas/ColumnIdentifier'
         - type: object
+          anyOf:
+            - required: [option_id]
+            - required: [option_name]
           properties:
             option_id:
               type: string
             option_name:
               type: string
+
+    OptionData:
+      type: object
+      description: >-
+        Custom styling and visual properties for a select option:
+        - `color`: Hex color code for the option background.
+        - `text_color`: Hex color code for the option text.
+      properties:
+        color:
+          type: string
+          description: Hex color code for the option background.
+          pattern: '^#[A-Fa-f0-9]{6}$'
+          example: '#4ECCCB'
+        text_color:
+          type: string
+          description: Hex color code for the option text.
+          pattern: '^#[A-Fa-f0-9]{6}$'
+          example: '#FFFFFF'
+      additionalProperties: true
 
     CreateOptionRequest:
       allOf:
@@ -352,10 +445,9 @@ components:
           properties:
             option_name:
               type: string
+              description: Display name of the option to create.
             option_data:
-              type: object
-              description: Additional option properties. Keys named id or name are ignored.
-              additionalProperties: true
+              $ref: '#/components/schemas/OptionData'
 
     CreateOptionResponse:
       type: object
@@ -369,6 +461,11 @@ components:
       allOf:
         - $ref: '#/components/schemas/ColumnIdentifier'
         - type: object
+          anyOf:
+            - required: [option_id]
+            - required: [option_name]
+            - required: [option_ids]
+            - required: [option_names]
           properties:
             option_id:
               type: string
@@ -390,10 +487,9 @@ components:
           properties:
             new_option_name:
               type: string
+              description: New display name for the option.
             update_option_data:
-              type: object
-              description: Only the supplied keys are updated.
-              additionalProperties: true
+              $ref: '#/components/schemas/OptionData'
 
     CreateIndexRequest:
       type: object
@@ -403,9 +499,14 @@ components:
       properties:
         table_id:
           type: string
+        name:
+          type: string
+          description: Optional index name, unique within the base; _pk is reserved.
         columns:
           type: array
           minItems: 1
+          uniqueItems: true
+          description: Column names in index order; duplicates are not allowed.
           items:
             type: string
         sync:
@@ -415,13 +516,15 @@ components:
         unique:
           type: boolean
           default: false
-          description: Create a unique index when true.
+          description: Require unique values, including null; repeated nulls violate uniqueness.
 
     CreateIndexResponse:
       type: object
       required:
         - task_id
+        - success
       properties:
+        success: {type: boolean, example: true}
         task_id:
           type: string
           description: Task ID for asynchronous creation; empty for synchronous creation.
@@ -437,6 +540,146 @@ components:
         index_id:
           type: string
 
+    APIKey:
+      type: object
+      required: [key_id, key_name, creation, expiration]
+      properties:
+        key_id: {type: string, example: api_37b4fe1a-9db9-4c13-8157-c6e6326d69ad}
+        key_name: {type: string, example: automation}
+        creation: {type: integer, format: int64, description: Unix timestamp in seconds.}
+        expiration: {type: integer, format: int64, description: Unix timestamp in seconds; -1 means no expiration., example: -1}
+    CreatedAPIKey:
+      allOf:
+        - $ref: '#/components/schemas/APIKey'
+        - type: object
+          required: [key, encoded]
+          properties:
+            key: {type: string, description: Plaintext secret returned only at creation.}
+            encoded: {type: string, description: 'Unpadded URL-safe Base64 of key_id:key. Send Authorization with the value ApiKey <encoded>.'}
+    JWTRequest:
+      type: object
+      required: [tables, permissions]
+      properties:
+        tables:
+          type: array
+          minItems: 1
+          description: Table-name patterns; * matches any sequence of characters. Use ["*"] for all tables.
+          items: {type: string}
+          example: [Table1]
+        permissions:
+          type: array
+          minItems: 1
+          description: 'Applies to all matching tables: read for queries, read-write for data writes, all for schema management.'
+          items: {type: string, enum: [read, read-write, all]}
+          example: [read-write]
+    User:
+      type: object
+      required: [username, roles]
+      properties:
+        username: {type: string, example: user_example}
+        roles:
+          type: array
+          items: {type: string, enum: [admin, default_role]}
+          example: [default_role]
+    CreateUserRequest:
+      type: object
+      required: [password]
+      properties:
+        username: {type: string, description: 'If omitted or empty, generates user_ followed by a UUID with hyphens removed.'}
+        password: {type: string, minLength: 1, format: password, description: Required nonempty password; stored as an Argon2id hash.}
+        roles:
+          type: array
+          description: Defaults to ["default_role"] when omitted or empty.
+          items: {type: string, enum: [admin, default_role]}
+    UpdateUserRequest:
+      type: object
+      required: [username]
+      anyOf:
+        - required: [password]
+        - required: [roles]
+      properties:
+        username: {type: string, minLength: 1}
+        password: {type: string, minLength: 1, format: password}
+        roles:
+          type: array
+          minItems: 1
+          description: Nonempty roles replaces the existing role list. An empty list does not clear roles.
+          items: {type: string, enum: [admin, default_role]}
+    BaseStatistics:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        storage: {type: number, description: Cached storage usage in bytes.}
+        rows: {type: number, description: Cached total row count.}
+        tables:
+          type: array
+          description: Included by base-info when table statistics exist; omitted by the base list.
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              name: {type: string}
+              rows: {type: number}
+    ColumnMetadata:
+      type: object
+      properties:
+        key: {type: string}
+        name: {type: string}
+        type: {type: string}
+        data: {type: object, nullable: true, additionalProperties: true, description: Type-specific column data.}
+      additionalProperties: true
+    TableMetadata:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        format_version: {type: integer}
+        dtable_format_version: {type: integer}
+        template_base_id: {type: string}
+        template_table_id: {type: string}
+        template_version: {type: integer, format: int64}
+        columns:
+          type: array
+          items: {$ref: '#/components/schemas/ColumnMetadata'}
+        custom_columns:
+          type: array
+          items: {$ref: '#/components/schemas/ColumnMetadata'}
+        indexes:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              id: {type: string}
+              name: {type: string}
+              columns: {type: array, items: {type: string}, description: 'Column keys in index order, not column names.'}
+              unique: {type: boolean}
+            additionalProperties: true
+      additionalProperties: true
+    BaseMetadata:
+      type: object
+      properties:
+        storage: {type: string, pattern: '^[0-9]+$', description: Storage usage in bytes encoded as a JSON string., example: '1024'}
+        tables:
+          type: array
+          nullable: true
+          items: {$ref: '#/components/schemas/TableMetadata'}
+    IndexTask:
+      type: object
+      properties:
+        task_id: {type: string, format: uuid}
+        table_id: {type: string}
+        columns: {type: array, items: {type: string}, description: Column names.}
+        status: {type: string, enum: [waiting, running, success, failure]}
+    ActiveRequest:
+      type: object
+      properties:
+        request_id: {type: string, format: uuid}
+        user_id: {type: string, description: SeaDB username.}
+        start: {type: string, format: date-time}
+        dtable_id: {type: string, description: Base UUID; empty for account/system operations.}
+        info: {type: string}
+        duration: {type: number, description: Elapsed seconds.}
+
   responses:
     BadRequest:
       description: Bad Request
@@ -444,12 +687,32 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-    Unauthorized:
-      description: Unauthorized or invalid JWT
+    Forbidden:
+      description: Invalid credentials or insufficient permissions.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflict with another transaction.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    TooLarge:
+      description: Row-operation limit exceeded (1000 updates or 10000 primary keys for deletion).
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Timeout:
+      description: Request timeout.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    RateLimited:
+      description: Configured server-wide requests-per-minute limit exceeded. This middleware returns plain text.
+      content:
+        text/plain:
+          schema: {type: string, example: too many requests}
     NotFound:
       description: Resource not found
       content:
@@ -464,6 +727,491 @@ components:
             $ref: '#/components/schemas/Error'
 
 paths:
+  /api/v1/users/api_keys:
+    post:
+      tags: [Authentication]
+      operationId: createApiKey
+      summary: Create an API key
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Create an API key with the current user's permissions. Save key or encoded; they are only returned at creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key_name]
+              properties:
+                key_name: {type: string, minLength: 1, description: Display name for the key.}
+                expire_time: {type: integer, format: int64, default: -1, description: Absolute Unix timestamp in seconds. Omitted or nonpositive means no expiration.}
+            example: {key_name: automation, expire_time: -1}
+      responses:
+        '200':
+          description: Newly created credential. Preserve key or encoded now.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreatedAPIKey'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+    get:
+      tags: [Authentication]
+      operationId: listApiKeys
+      summary: List API keys
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: List the current user's keys, including expired keys. Secrets are not returned.
+      responses:
+        '200':
+          description: Key metadata; an empty list is [].
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/APIKey'}}
+              example: [{key_id: api_37b4fe1a-9db9-4c13-8157-c6e6326d69ad, key_name: automation, creation: 1777346265, expiration: -1}]
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+    delete:
+      tags: [Authentication]
+      operationId: deleteApiKeys
+      summary: Delete API keys
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Delete the current user's keys. Administrators may delete any user's keys. Unknown or inaccessible IDs are skipped.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: {type: array, minItems: 1, items: {type: string}}
+            example: {ids: [api_37b4fe1a-9db9-4c13-8157-c6e6326d69ad]}
+      responses:
+        '200':
+          description: IDs actually deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted_ids: {type: array, items: {type: string}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/jwt-token:
+    post:
+      tags: [Authentication]
+      operationId: obtainJwtToken
+      summary: Obtain a base JWT
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Obtain a base JWT valid for 72 hours. Base owner or administrator only. Use the token with Bearer authentication on data and schema APIs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/JWTRequest'}
+            example: {tables: [Table1], permissions: [read-write]}
+      responses:
+        '200':
+          description: Base-scoped JWT.
+          content:
+            application/json:
+              schema: {type: object, required: [jwt_token], properties: {jwt_token: {type: string}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+
+  /api/v1/users:
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Create a user. Administrator only. Duplicate usernames and unknown roles return 500.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateUserRequest'}
+            example: {username: user_example, password: replace-with-a-password, roles: [default_role]}
+      responses:
+        '200':
+          description: Username and assigned roles; password is never returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+    put:
+      tags: [Users]
+      operationId: updateUser
+      summary: Update a user
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Update a user's password and/or roles. Administrator only. Empty values leave existing settings unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateUserRequest'}
+            example: {username: user_example, roles: [default_role]}
+      responses:
+        '200': {description: Updated successfully; empty body.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: Delete a user
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Delete a user, their credentials and associations. Administrator only. Base data is retained.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [username], properties: {username: {type: string}}}
+            example: {username: user_example}
+      responses:
+        '200': {description: Deleted successfully; empty body.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: List users in creation order. Administrator only.
+      parameters:
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: limit, in: query, description: Omitted or nonpositive uses 100., schema: {type: integer, minimum: 1, default: 100}}
+      responses:
+        '200':
+          description: User list.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/User'}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/users/bases:
+    get:
+      tags: [Users]
+      operationId: listUserBases
+      summary: List the current user's bases
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: List base UUIDs associated with the current user, including for administrator accounts.
+      responses:
+        '200':
+          description: Base UUID list.
+          content:
+            application/json:
+              schema: {type: array, items: {type: string, format: uuid}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+
+  /api/v1/stats:
+    get:
+      tags: [Bases]
+      operationId: getSystemStatistics
+      summary: Get system base statistics
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Get cached system totals, refreshed daily. Administrator only. Storage is in bytes; new or empty bases may not yet appear.
+      responses:
+        '200':
+          description: Cached totals.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  number_of_bases: {type: integer}
+                  total_rows: {type: number}
+                  total_storage: {type: number}
+              example: {number_of_bases: 1, total_rows: 100, total_storage: 4096}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/bases:
+    get:
+      tags: [Bases]
+      operationId: listBaseStatistics
+      summary: List base statistics
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: List cached base statistics. Administrator only. Empty pages return null.
+      parameters:
+        - {name: order-by, in: query, description: Sort by storage or rows descending. Omitted uses statistics-record creation order ascending., schema: {type: string, enum: [storage, rows]}}
+        - {name: asc, in: query, description: Any positive integer enables ascending order for storage/rows sorting., schema: {type: integer, default: 0}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: limit, in: query, description: Omitted or zero uses 10., schema: {type: integer, minimum: 0, default: 10}}
+      responses:
+        '200':
+          description: Cached base page, or null if empty.
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                properties:
+                  bases: {type: array, items: {$ref: '#/components/schemas/BaseStatistics'}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/base:
+    post:
+      tags: [Bases]
+      operationId: createBase
+      summary: Create a base
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters:
+        - name: base_id
+          in: path
+          required: true
+          description: Client-generated lowercase UUID; creation does not accept a base name or template here.
+          schema: {type: string, format: uuid, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
+      description: Create a base owned by the current user. An existing UUID returns 200 without changes.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, properties: {name: {type: string, description: 'Optional globally unique name; cannot be blank, a UUID or template.'}}}
+            example: {name: my-base}
+      responses:
+        '200': {description: Created or already exists; empty body.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/ServerError'}
+    delete:
+      tags: [Bases]
+      operationId: deleteBase
+      summary: Delete a base
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Delete a base and its data. Base owner or administrator only. The template alias cannot be used for this operation. Configured legacy backups are also removed.
+      responses:
+        '200': {description: Deleted successfully; normally empty body.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/base-info:
+    get:
+      tags: [Bases]
+      operationId: getBaseStatistics
+      summary: Get base statistics
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Get cached daily statistics. Base owner or administrator only. Storage is in bytes.
+      responses:
+        '200':
+          description: Cached base statistics.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BaseStatistics'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/metadata:
+    get:
+      tags: [Bases]
+      operationId: getBaseMetadata
+      summary: Get base metadata
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Get current schema and storage. Base owner or administrator only. For row counts, use base-info or SELECT COUNT(*).
+      responses:
+        '200':
+          description: Base schema and storage.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BaseMetadata'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/base/update-row-count:
+    post:
+      tags: [Bases]
+      operationId: updateBaseRowCount
+      summary: Recalculate base row counts
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Schedule row-count recalculation for all tables. Base owner or administrator only. Success confirms scheduling, not completion or a cached-statistics refresh.
+      responses:
+        '200':
+          description: Recalculation scheduled.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Success'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/base/update-base-owner:
+    post:
+      tags: [Bases]
+      operationId: updateBaseOwner
+      summary: Change the base owner
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Change the base owner to an existing user. Administrator only; an unknown user returns 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [username], properties: {username: {type: string}}}
+            example: {username: user_example}
+      responses:
+        '200':
+          description: Owner updated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Success'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/base/update-base-id:
+    post:
+      tags: [Bases]
+      operationId: updateBaseId
+      summary: Change the base UUID
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Change the UUID to one not already in use. Administrator only. The template alias cannot be used for this operation. Obtain new JWTs after the change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [base_id], properties: {base_id: {type: string, format: uuid}}}
+      responses:
+        '200':
+          description: UUID updated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Success'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+  /api/v1/{base_id}/base/update-base-name:
+    post:
+      tags: [Bases]
+      operationId: updateBaseName
+      summary: Set or change the base name
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: Set a globally unique base name without changing its UUID. Base owner or administrator only. The name cannot be blank, a UUID or template.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [name], properties: {name: {type: string, minLength: 1}}}
+            example: {name: my-renamed-base}
+      responses:
+        '200':
+          description: Name updated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Success'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/ServerError'}
+
+  /api/v1/{base_id}/index/task:
+    get:
+      tags: [Indexes]
+      operationId: getIndexTask
+      summary: Get index task status
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/base_id'}
+        - {name: task_id, in: query, description: 'Task UUID from index creation. If omitted, returns an active task for the base or its newest finished task.', schema: {type: string}}
+      description: Get index task status. Base owner or administrator only; requires Basic or ApiKey. Finished tasks expire after roughly one hour.
+      responses:
+        '200':
+          description: Task status.
+          content:
+            application/json:
+              schema: {type: object, properties: {status: {type: string, enum: [waiting, running, success, failure]}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/{base_id}/index/tasks:
+    get:
+      tags: [Indexes]
+      operationId: listIndexTasks
+      summary: List index tasks
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{$ref: '#/components/parameters/base_id'}]
+      description: List retained index tasks for this base. Base owner or administrator only; requires Basic or ApiKey.
+      responses:
+        '200':
+          description: Task list wrapped in tasks.
+          content:
+            application/json:
+              schema: {type: object, properties: {tasks: {type: array, items: {$ref: '#/components/schemas/IndexTask'}}}}
+              example: {tasks: []}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /api/v1/requests:
+    get:
+      tags: [System]
+      operationId: listActiveRequests
+      summary: List active requests
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: List active requests, including this request. Administrator only.
+      responses:
+        '200':
+          description: Requests currently executing on this server.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/ActiveRequest'}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/stop-requests:
+    post:
+      tags: [System]
+      operationId: stopRequest
+      summary: Cancel a request
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      parameters: [{name: id, in: query, description: A single request_id from the active request list; not an array., schema: {type: string, format: uuid}}]
+      description: Cancel an active request. Administrator only. Missing or unknown IDs are ignored.
+      responses:
+        '200': {description: Cancellation requested; empty body.}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/metrics:
+    get:
+      tags: [System]
+      operationId: getMetrics
+      summary: Get server metrics
+      security: [{BasicAuth: []}, {APIKeyAuth: []}]
+      description: Administrator only. JSON metrics on this server; request_count includes the metrics request itself.
+      responses:
+        '200':
+          description: Server activity.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_count: {type: integer}
+                  index_adding_count: {type: integer, format: int64}
+                  is_cleaning_base: {type: boolean}
+              example: {request_count: 1, index_adding_count: 0, is_cleaning_base: false}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /ping:
+    get:
+      tags: [System]
+      operationId: ping
+      summary: Ping
+      security: []
+      description: Check server health. No authentication required.
+      responses:
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '200':
+          description: Server responds.
+          content:
+            application/json:
+              schema: {type: object, properties: {ret: {type: string, enum: [pong]}}}
+              example: {ret: pong}
+
   /api/v1/{base_id}/query:
     post:
       tags:
@@ -473,15 +1221,20 @@ paths:
       parameters:
         - $ref: '#/components/parameters/base_id'
       description: >-
-        Execute a SELECT, INSERT, UPDATE, or DELETE statement. Parameterized
-        values use `?` placeholders and cannot replace identifiers such as table
-        names, column names, or function names.
+        Execute SELECT, EXPLAIN, INSERT, REPLACE, UPDATE, DELETE or supported DDL
+        (CREATE/DROP/ALTER TABLE and CREATE/DROP INDEX). Read result cells using
+        metadata[].id. DML and most DDL return null results and metadata;
+        CREATE INDEX returns results.task_id for asynchronous creation.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/QueryRequest'
+            example:
+              sql: SELECT `_pk`, `name` FROM `Table1` WHERE `name` = ? LIMIT 10
+              parameters: [Alice]
+              convert_keys: true
       responses:
         '200':
           description: Query result
@@ -491,8 +1244,14 @@ paths:
                 $ref: '#/components/schemas/QueryResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/Timeout'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -504,13 +1263,25 @@ paths:
       summary: Insert rows
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Insert multiple rows. Row object keys are column names.
+        - name: apply_default
+          in: query
+          description: When true (case-insensitive), fills omitted cells whose column data enables default values. Explicit null is not replaced.
+          schema: {type: boolean, default: false}
+      description: >-
+        Insert rows using column names and select-option names; unknown columns
+        are ignored. JWT requires 'read-write' or 'all' permission. pks follows input order.
+        replace=true creates new primary keys for matched rows. Errors may include
+        partial-success pks and inserted_row_count.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/InsertRowsRequest'
+            example:
+              table_name: Table1
+              rows: [{name: Alice}]
+              replace: false
       responses:
         '200':
           description: Insert result
@@ -520,8 +1291,15 @@ paths:
                 $ref: '#/components/schemas/InsertRowsResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Transaction conflict; may include successfully inserted rows.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InsertRowsResponse'}
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
     put:
@@ -531,13 +1309,16 @@ paths:
       summary: Batch update rows
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Update multiple rows by primary key.
+      description: >-
+        Update up to 1000 rows by primary key (`_pk`). Only supplied cells change;
+        unknown columns are ignored. JWT requires 'read-write' or 'all' permission.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateRowsRequest'
+            example: {table_name: Table1, updates: [{pk: 1, row: {name: Bob}}]}
       responses:
         '200':
           description: Update result
@@ -547,8 +1328,14 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
     delete:
@@ -558,13 +1345,16 @@ paths:
       summary: Batch delete rows
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Delete rows by primary key. Missing primary keys are ignored.
+      description: >-
+        Delete rows by up to 10000 primary keys; missing keys are ignored.
+        JWT requires 'read-write' or 'all' permission.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DeleteRowsRequest'
+            example: {table_name: Table1, pks: [1, 2]}
       responses:
         '200':
           description: Delete result
@@ -574,8 +1364,14 @@ paths:
                 $ref: '#/components/schemas/DeleteRowsResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -586,9 +1382,8 @@ paths:
       operationId: createTable
       summary: Create a table
       description: >-
-        Create a table. To bind the table to a template, set
-        `template_table_name`; the table's columns and indexes are then taken
-        from that template table.
+        Create a table, optionally using a template table's schema.
+        table_name must be nonempty and cannot contain *. JWT requires 'all' permission.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
@@ -598,6 +1393,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateTableRequest'
       responses:
+        '404':
+          $ref: '#/components/responses/NotFound'
         '200':
           description: Created table
           content:
@@ -606,8 +1403,8 @@ paths:
                 $ref: '#/components/schemas/CreateTableResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
     delete:
@@ -617,7 +1414,7 @@ paths:
       summary: Delete a table
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Identify the table with table_id, table_name, or both.
+      description: Delete a table by ID or name. JWT requires 'all' permission. Template tables cannot be deleted.
       requestBody:
         required: true
         content:
@@ -633,8 +1430,8 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -646,7 +1443,7 @@ paths:
       summary: Update a table
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Update the name of an existing table.
+      description: Rename a table. Duplicate names return 400. JWT requires 'all' permission on both the current and new table names.
       requestBody:
         required: true
         content:
@@ -662,8 +1459,8 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -675,6 +1472,7 @@ paths:
         - Tables
       operationId: updateTableRowCount
       summary: Update a table's row count
+      description: Recalculate the number of rows in the table. JWT requires 'all' permission.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
@@ -692,8 +1490,8 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -708,9 +1506,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/base_id'
       description: >-
-        Create a column. Supported types are text, int64, float64, float32,
-        bool, datetime, single-select, multiple-select, and list. Each table
-        also has a built-in auto-increment `_pk` column.
+        Create a column with optional type-specific settings in column_data.
+        JWT requires 'all' permission. Template-managed schema changes return 400.
       requestBody:
         required: true
         content:
@@ -718,6 +1515,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateColumnRequest'
       responses:
+        '404':
+          $ref: '#/components/responses/NotFound'
         '200':
           description: Created column
           content:
@@ -726,8 +1525,8 @@ paths:
                 $ref: '#/components/schemas/CreateColumnResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
     delete:
@@ -735,6 +1534,7 @@ paths:
         - Columns
       operationId: deleteColumn
       summary: Delete a column
+      description: Delete a column and its indexes. JWT requires 'all' permission. Unknown columns are ignored; template-managed schema changes return 400.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
@@ -752,8 +1552,8 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -765,7 +1565,7 @@ paths:
       summary: Update a column
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Update a column name and/or selected keys in column_data.
+      description: Update a column name or selected data keys; type cannot change. JWT requires 'all' permission. Bound tables allow data overrides but reject renaming. Missing columns return 400.
       requestBody:
         required: true
         content:
@@ -781,8 +1581,8 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -796,7 +1596,7 @@ paths:
       summary: Copy a column
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Copy a column's metadata and values into a new column.
+      description: Copy a column's metadata and values. JWT requires 'all' permission. Missing source, duplicate destination and template-managed schema return 400.
       requestBody:
         required: true
         content:
@@ -804,6 +1604,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CopyColumnRequest'
       responses:
+        '404':
+          $ref: '#/components/responses/NotFound'
         '200':
           description: Created column
           content:
@@ -812,20 +1614,24 @@ paths:
                 $ref: '#/components/schemas/CopyColumnResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
 
   /api/v1/{base_id}/column-options:
     post:
       tags:
-        - Single-select options
+        - Single/Multiple Select Options
       operationId: createColumnOption
-      summary: Create a single-select option
+      summary: Add a single/multiple select option
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Create an option for a single-select or multiple-select column.
+      description: >-
+        Add an option to a single-select or multiple-select column, or return an existing option's ID.
+        Use `option_data` to configure optional attributes (`color`, `text_color`).
+        JWT requires 'all' permission. Tables bound to a template will locally override the select options in the template. The template is not affected.
+        Missing columns return 400; non-select columns return 500.
       requestBody:
         required: true
         content:
@@ -833,6 +1639,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateOptionRequest'
       responses:
+        '404':
+          $ref: '#/components/responses/NotFound'
         '200':
           description: Created option
           content:
@@ -841,18 +1649,21 @@ paths:
                 $ref: '#/components/schemas/CreateOptionResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
     delete:
       tags:
-        - Single-select options
+        - Single/Multiple Select Options
       operationId: deleteColumnOption
-      summary: Delete a single-select option
+      summary: Delete single/multiple select options
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Delete one or more options by ID and/or name.
+      description: >-
+        Delete select options from a single-select or multiple-select column by ID or name. JWT requires 'all' permission.
+        Tables bound to a template will locally override the select options in the template. The template is not affected.
+        Missing columns/options are ignored; non-select columns return 500.
       requestBody:
         required: true
         content:
@@ -868,20 +1679,24 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
     put:
       tags:
-        - Single-select options
+        - Single/Multiple Select Options
       operationId: updateColumnOption
-      summary: Update a single-select option
+      summary: Update a single/multiple select option
       parameters:
         - $ref: '#/components/parameters/base_id'
-      description: Update an option name and/or selected keys in option_data.
+      description: >-
+        Update a single-select or multiple-select option's name or optional attributes (`color`, `text_color`).
+        Only supplied attributes in `update_option_data` are updated; `id` cannot be modified, and `name` must be updated via `new_option_name`.
+        JWT requires 'all' permission. Tables bound to a template will locally override the select options in the template. The template is not affected.
+        Missing columns return 400; missing options, duplicate names and non-select columns return 500.
       requestBody:
         required: true
         content:
@@ -897,8 +1712,8 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -913,10 +1728,10 @@ paths:
       parameters:
         - $ref: '#/components/parameters/base_id'
       description: >-
-        Create an index for one or more columns. For asynchronous creation,
-        the response contains a task_id. For synchronous creation, task_id is
-        empty after the index is complete. Columns cannot be repeated in a
-        compound index.
+        Create an index on one or more columns. JWT requires 'all' permission. Async creation
+        returns task_id; sync creation returns an empty task_id. Duplicate/running
+        indexes, missing tables and template-managed schema return 400;
+        missing columns may return 500.
       requestBody:
         required: true
         content:
@@ -924,6 +1739,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateIndexRequest'
       responses:
+        '404':
+          $ref: '#/components/responses/NotFound'
         '200':
           description: Index creation task
           content:
@@ -932,8 +1749,8 @@ paths:
                 $ref: '#/components/schemas/CreateIndexResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
     delete:
@@ -941,6 +1758,7 @@ paths:
         - Indexes
       operationId: deleteIndex
       summary: Delete a column index
+      description: Delete an index using index_id from base metadata. JWT requires 'all' permission. Missing indexes are ignored; missing tables and template-managed schema return 400.
       parameters:
         - $ref: '#/components/parameters/base_id'
       requestBody:
@@ -958,10 +1776,9 @@ paths:
                 $ref: '#/components/schemas/Success'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
-
