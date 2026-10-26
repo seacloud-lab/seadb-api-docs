@@ -181,15 +181,13 @@ components:
       type: object
       required:
         - rows
-      anyOf:
-        - required: [table_id]
-        - required: [table_name]
       properties:
         table_id:
           type: string
-          description: Table ID; takes precedence over table_name.
+          description: Table ID; takes precedence over table_name. Required if table_name is omitted.
         table_name:
           type: string
+          description: Table name; required if table_id is omitted.
         rows:
           type: array
           items:
@@ -221,13 +219,13 @@ components:
       type: object
       required:
         - updates
-      anyOf:
-        - required: [table_id]
-        - required: [table_name]
       properties:
-        table_id: {type: string}
+        table_id:
+          type: string
+          description: Table ID; takes precedence over table_name. Required if table_name is omitted.
         table_name:
           type: string
+          description: Table name; required if table_id is omitted.
         updates:
           type: array
           maxItems: 1000
@@ -251,13 +249,13 @@ components:
       type: object
       required:
         - pks
-      anyOf:
-        - required: [table_id]
-        - required: [table_name]
       properties:
-        table_id: {type: string}
+        table_id:
+          type: string
+          description: Table ID; takes precedence over table_name. Required if table_name is omitted.
         table_name:
           type: string
+          description: Table name; required if table_id is omitted.
         pks:
           type: array
           maxItems: 10000
@@ -277,14 +275,13 @@ components:
     TableIdentifier:
       type: object
       description: Identify a table by ID or name. ID is tried first; name is a fallback if the ID does not resolve.
-      anyOf:
-        - required: [table_id]
-        - required: [table_name]
       properties:
         table_id:
           type: string
+          description: Table ID; takes precedence over table_name. Required if table_name is omitted.
         table_name:
           type: string
+          description: Table name; required if table_id is omitted.
 
     CreateTableRequest:
       type: object
@@ -359,15 +356,13 @@ components:
       allOf:
         - $ref: '#/components/schemas/TableIdentifier'
         - type: object
-          anyOf:
-            - required: [column_key]
-            - required: [column_name]
           properties:
             column_key:
               type: string
-              description: Column key; takes precedence over column_name.
+              description: Column key; takes precedence over column_name. Required if column_name is omitted.
             column_name:
               type: string
+              description: Column name; required if column_key is omitted.
 
     UpdateColumnRequest:
       allOf:
@@ -408,14 +403,13 @@ components:
       allOf:
         - $ref: '#/components/schemas/ColumnIdentifier'
         - type: object
-          anyOf:
-            - required: [option_id]
-            - required: [option_name]
           properties:
             option_id:
               type: string
+              description: Option ID; required if option_name is omitted.
             option_name:
               type: string
+              description: Option name; required if option_id is omitted.
 
     OptionData:
       type: object
@@ -461,22 +455,22 @@ components:
       allOf:
         - $ref: '#/components/schemas/ColumnIdentifier'
         - type: object
-          anyOf:
-            - required: [option_id]
-            - required: [option_name]
-            - required: [option_ids]
-            - required: [option_names]
+          description: Provide at least one of option_id, option_name, option_ids, or option_names.
           properties:
             option_id:
               type: string
+              description: Single option ID to delete; provide at least one of option_id, option_name, option_ids, or option_names.
             option_name:
               type: string
+              description: Single option name to delete.
             option_ids:
               type: array
+              description: Option IDs to delete.
               items:
                 type: string
             option_names:
               type: array
+              description: Option names to delete.
               items:
                 type: string
 
@@ -594,9 +588,6 @@ components:
     UpdateUserRequest:
       type: object
       required: [username]
-      anyOf:
-        - required: [password]
-        - required: [roles]
       properties:
         username: {type: string, minLength: 1}
         password: {type: string, minLength: 1, format: password}
@@ -828,7 +819,7 @@ paths:
       operationId: createUser
       summary: Create a user
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
-      description: Create a user. Administrator only. Duplicate usernames and unknown roles return 500.
+      description: Create a user. Administrator only. Duplicate usernames and unknown roles return 400.
       requestBody:
         required: true
         content:
@@ -917,7 +908,7 @@ paths:
       operationId: getSystemStatistics
       summary: Get system base statistics
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
-      description: Get cached system totals, refreshed daily. Administrator only. Storage is in bytes; new or empty bases may not yet appear.
+      description: Refreshed daily. Administrator only. Storage is in bytes; new or empty bases may not yet appear.
       responses:
         '200':
           description: Cached totals.
@@ -986,7 +977,7 @@ paths:
       summary: Delete a base
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
       parameters: [{$ref: '#/components/parameters/base_id'}]
-      description: Delete a base and its data. Base owner or administrator only. The template alias cannot be used for this operation. Configured legacy backups are also removed.
+      description: Delete a base and its data. Base owner or administrator only.
       responses:
         '200': {description: Deleted successfully; normally empty body.}
         '400': {$ref: '#/components/responses/BadRequest'}
@@ -1017,7 +1008,7 @@ paths:
       summary: Get base metadata
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
       parameters: [{$ref: '#/components/parameters/base_id'}]
-      description: Get current schema and storage. Base owner or administrator only. For row counts, use base-info or SELECT COUNT(*).
+      description: Get current schema. Base owner or administrator only. For row counts, use base-info or SELECT COUNT(*).
       responses:
         '200':
           description: Base schema and storage.
@@ -1075,7 +1066,7 @@ paths:
       summary: Change the base UUID
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
       parameters: [{$ref: '#/components/parameters/base_id'}]
-      description: Change the UUID to one not already in use. Administrator only. The template alias cannot be used for this operation. Obtain new JWTs after the change.
+      description: Change the UUID to one not already in use. Administrator only. Obtain new JWTs after the change.
       requestBody:
         required: true
         content:
@@ -1098,7 +1089,7 @@ paths:
       summary: Set or change the base name
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
       parameters: [{$ref: '#/components/parameters/base_id'}]
-      description: Set a globally unique base name without changing its UUID. Base owner or administrator only. The name cannot be blank, a UUID or template.
+      description: Set a globally unique base name without changing its UUID. Base owner or administrator only. The name cannot be empty string, a UUID or `template`.
       requestBody:
         required: true
         content:
@@ -1263,10 +1254,6 @@ paths:
       summary: Insert rows
       parameters:
         - $ref: '#/components/parameters/base_id'
-        - name: apply_default
-          in: query
-          description: When true (case-insensitive), fills omitted cells whose column data enables default values. Explicit null is not replaced.
-          schema: {type: boolean, default: false}
       description: >-
         Insert rows using column names and select-option names; unknown columns
         are ignored. JWT requires 'read-write' or 'all' permission. pks follows input order.
