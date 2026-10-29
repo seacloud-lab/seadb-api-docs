@@ -22,7 +22,7 @@ content:
 
 - **Base**: a database containing tables, columns, indexes and rows.
 - **`base_id`**: the base UUID or its assigned name in API paths. Creation requires a lowercase UUID.
-- **Base name**: an optional, globally unique alias. It cannot be blank, a UUID or `template`.
+- **Base name**: an optional, globally unique alias.
 - **`table_id`** / **`table_name`**: the internal table identifier and its name. Endpoints accepting either require at least one.
 - **`_pk`**: the built-in auto-increment primary key. Row APIs use `pk` or `pks` for these unsigned integer values.
 
