@@ -315,34 +315,193 @@ components:
               type: string
 
     CreateColumnRequest:
+      description: >-
+        Choose which column type you want to add.
+      oneOf:
+        - $ref: '#/components/schemas/CreateTextColumnRequest'
+        - $ref: '#/components/schemas/CreateInt64ColumnRequest'
+        - $ref: '#/components/schemas/CreateFloat64ColumnRequest'
+        - $ref: '#/components/schemas/CreateFloat32ColumnRequest'
+        - $ref: '#/components/schemas/CreateBoolColumnRequest'
+        - $ref: '#/components/schemas/CreateDatetimeColumnRequest'
+        - $ref: '#/components/schemas/CreateSingleSelectColumnRequest'
+        - $ref: '#/components/schemas/CreateMultipleSelectColumnRequest'
+        - $ref: '#/components/schemas/CreateListColumnRequest'
+
+    CreateColumnFields:
       allOf:
         - $ref: '#/components/schemas/TableIdentifier'
         - type: object
           required:
             - column_name
-            - column_type
           properties:
             column_name:
               type: string
+
+    CreateTextColumnRequest:
+      title: Text
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
             column_type:
               type: string
-              enum:
-                - text
-                - int64
-                - float64
-                - float32
-                - bool
-                - datetime
-                - single-select
-                - multiple-select
-                - list
+              enum: [text]
             column_data:
-              type: object
-              description: >-
-                Configuration object for column types that support options or settings:
-                - `single-select`, `multiple-select`: `options` (array of objects), where each object defines an option with `id` (unique string), `name` (string), and optional attributes (`color`, `text_color`).
-                - `text`: `compressed` (boolean, optional), set `true` to enable text compression.
-              additionalProperties: true
+              $ref: '#/components/schemas/TextColumnData'
+
+    TextColumnData:
+      type: object
+      description: Settings for a text column.
+      properties:
+        compressed:
+          type: boolean
+          description: Set to true to enable text compression.
+          example: true
+
+    CreateInt64ColumnRequest:
+      title: Int64
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [int64]
+
+    CreateFloat64ColumnRequest:
+      title: Float64
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [float64]
+
+    CreateFloat32ColumnRequest:
+      title: Float32
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [float32]
+
+    CreateBoolColumnRequest:
+      title: Bool
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [bool]
+
+    CreateDatetimeColumnRequest:
+      title: Datetime
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [datetime]
+
+    CreateSingleSelectColumnRequest:
+      title: Single-select
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [single-select]
+            column_data:
+              $ref: '#/components/schemas/SelectColumnData'
+
+    SelectColumnData:
+      type: object
+      description: Initial options for a single-select or multiple-select column.
+      properties:
+        options:
+          type: array
+          description: Options to create. Option IDs and names must each be unique within the column.
+          items:
+            type: object
+            required:
+              - id
+              - name
+            properties:
+              id:
+                type: string
+                description: Unique option ID within the column.
+                example: '859556'
+              name:
+                type: string
+                description: Unique option name within the column.
+                example: Todo
+              color:
+                type: string
+                description: Hex color code for the option background.
+                example: '#4ECCCB'
+              text_color:
+                type: string
+                description: Hex color code for the option text.
+                example: '#FFFFFF'
+
+    CreateMultipleSelectColumnRequest:
+      title: Multiple-select
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [multiple-select]
+            column_data:
+              $ref: '#/components/schemas/SelectColumnData'
+
+    CreateListColumnRequest:
+      title: List
+      allOf:
+        - $ref: '#/components/schemas/CreateColumnFields'
+        - type: object
+          required:
+            - column_type
+          properties:
+            column_type:
+              type: string
+              enum: [list]
+            column_data:
+              $ref: '#/components/schemas/ListColumnData'
+
+    ListColumnData:
+      type: object
+      description: Settings for a list column.
+      properties:
+        list_type:
+          type: string
+          description: Type of the elements stored in the list.
+          enum: [text, float64, float32, int64, datetime, bool]
+          example: text
 
     CreateColumnResponse:
       type: object
@@ -411,25 +570,6 @@ components:
               type: string
               description: Option name; required if option_id is omitted.
 
-    OptionData:
-      type: object
-      description: >-
-        Custom styling and visual properties for a select option:
-        - `color`: Hex color code for the option background.
-        - `text_color`: Hex color code for the option text.
-      properties:
-        color:
-          type: string
-          description: Hex color code for the option background.
-          pattern: '^#[A-Fa-f0-9]{6}$'
-          example: '#4ECCCB'
-        text_color:
-          type: string
-          description: Hex color code for the option text.
-          pattern: '^#[A-Fa-f0-9]{6}$'
-          example: '#FFFFFF'
-      additionalProperties: true
-
     CreateOptionRequest:
       allOf:
         - $ref: '#/components/schemas/ColumnIdentifier'
@@ -442,6 +582,24 @@ components:
               description: Display name of the option to create.
             option_data:
               $ref: '#/components/schemas/OptionData'
+
+    OptionData:
+      type: object
+      description: Optional color settings for a single-select or multiple-select option.
+      properties:
+        color:
+          type: string
+          description: Background color of the option label, as a six-digit hex color code.
+          pattern: '^#[A-Fa-f0-9]{6}$'
+          example: '#4ECCCB'
+        text_color:
+          type: string
+          description: Text color of the option label, as a six-digit hex color code.
+          pattern: '^#[A-Fa-f0-9]{6}$'
+          example: '#FFFFFF'
+      example:
+        color: '#4ECCCB'
+        text_color: '#FFFFFF'
 
     CreateOptionResponse:
       type: object
@@ -929,7 +1087,7 @@ paths:
       operationId: listBaseStatistics
       summary: List base statistics
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
-      description: List cached base statistics. Administrator only. Empty pages return null.
+      description: List base statistics. Administrator only. Empty pages return null.
       parameters:
         - {name: order-by, in: query, description: Sort by storage or rows descending. Omitted uses statistics-record creation order ascending., schema: {type: string, enum: [storage, rows]}}
         - {name: asc, in: query, description: Any positive integer enables ascending order for storage/rows sorting., schema: {type: integer, default: 0}}
@@ -991,7 +1149,7 @@ paths:
       summary: Get base statistics
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
       parameters: [{$ref: '#/components/parameters/base_id'}]
-      description: Get cached daily statistics. Base owner or administrator only. Storage is in bytes.
+      description: Refreshed daily. Base owner or administrator only. Storage is in bytes.
       responses:
         '200':
           description: Cached base statistics.
@@ -1025,7 +1183,7 @@ paths:
       summary: Recalculate base row counts
       security: [{BasicAuth: []}, {APIKeyAuth: []}]
       parameters: [{$ref: '#/components/parameters/base_id'}]
-      description: Schedule row-count recalculation for all tables. Base owner or administrator only. Success confirms scheduling, not completion or a cached-statistics refresh.
+      description: Schedule row-count recalculation for all tables. Base owner or administrator only. Success confirms scheduling, not completion or a statistics refresh.
       responses:
         '200':
           description: Recalculation scheduled.
